@@ -200,7 +200,7 @@ def draw_face_mesh(frame, face_landmarks):
 def draw_hand(frame, landmarks_px):
     for start_idx, end_idx in HAND_CONNECTIONS:
         cv2.line(frame, landmarks_px[start_idx], landmarks_px[end_idx],
-(255, 255, 255), 2)
+(0, 255, 0), 2)
     for x,y in landmarks_px:
         cv2.circle(frame,(x,y),4,(0,255,0), -1)
  
