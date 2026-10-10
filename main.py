@@ -2,6 +2,7 @@ import cv2
 import numpy as np
 import urllib.request
 import os
+import math
 import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
@@ -28,7 +29,49 @@ options = vision.FaceLandmarkerOptions(
 detector = vision.FaceLandmarker.create_from_options(options)
  
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-REACTION_IMAGE_BASENAME = "Silly cat"
+
+MODEL_PATH = "C:/Users/RedFox3k/hand_landmarker.task"
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),          # большой палец
+    (0, 5), (5, 6), (6, 7), (7, 8),          # указательный
+    (5, 9), (9, 10), (10, 11), (11, 12),     # средний
+    (9, 13), (13, 14), (14, 15), (15, 16),   # безымянный
+    (13, 17), (17, 18), (18, 19), (19, 20),  # мизинец
+    (0, 17),                                  # ладонь
+]
+
+base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
+options = vision.HandLandmarkerOptions(
+    base_options=base_options,
+    num_hands=2,
+    min_hand_detection_confidence=0.7,
+    min_tracking_confidence=0.7,
+    running_mode=vision.RunningMode.VIDEO
+)
+
+landmarker = vision.HandLandmarker.create_from_options(options)
+
+TIP_IDS = [4, 8, 12, 16, 20]
+
+def distance(p_a,p_b):
+    return math.hypot(p_a.x - p_b.x, p_a.y - p_b.y)
+
+def count_fingers(landmarks, handedness_label):
+    fingers = []
+    thumb_tip = landmarks[4]
+    index_mcp = landmarks[17]
+    t_i_d = distance(thumb_tip, index_mcp)
+    wrist = landmarks[0]
+    middle_mcp = landmarks[9]
+    hand_size = distance(wrist, middle_mcp)
+    THUMB_EXTENDED_RATIO = 0.8
+    fingers.append(1 if (t_i_d / hand_size)>THUMB_EXTENDED_RATIO else 0)
+    
+    for i in range(1,5):
+        tip = TIP_IDS[i]
+        pip_joint = tip - 2
+        fingers.append(1 if landmarks[tip].y < landmarks[pip_joint].y else 0)
+    return fingers 
  
  
 def find_reaction_image(folder, basename):
@@ -83,10 +126,7 @@ def check_smile(ctx):
     return smile / 2 > SMILE_THRESHOLD
 
         
-EXPRESSIONS = [
-    {'name': 'wink+tongue', 'image_basename': 'Silly cat', 'check': check_wink_tongue},
-    {'name': 'smile', 'image_basename': 'Smiling cat', 'check': check_smile},
-]
+EXPRESSIONS = []
 
 for expr in EXPRESSIONS:
     path = find_reaction_image(SCRIPT_DIR, expr['image_basename'])
@@ -150,12 +190,19 @@ def draw_face_mesh(frame, face_landmarks):
         [(int(lm.x * w), int(lm.y * h)) for lm in face_landmarks]
     )
     for start_idx, end_idx in ALL_CONNECTIONS:
-        cv2.line(frame, points[start_idx], points[end_idx], (0, 255, 255), 1, cv2.LINE_AA)
+        cv2.line(frame, points[start_idx], points[end_idx], (0, 255, 0), 1, cv2.LINE_AA)
  
     for (x, y) in points:
-        cv2.circle(frame, (x, y), 1, (0, 0, 255), -1, cv2.LINE_AA)
+        cv2.circle(frame, (x, y), 1, (0, 255, 0), -1, cv2.LINE_AA)
  
     return frame
+
+def draw_hand(frame, landmarks_px):
+    for start_idx, end_idx in HAND_CONNECTIONS:
+        cv2.line(frame, landmarks_px[start_idx], landmarks_px[end_idx],
+(255, 255, 255), 2)
+    for x,y in landmarks_px:
+        cv2.circle(frame,(x,y),4,(0,255,0), -1)
  
  
 cap = cv2.VideoCapture(0)
@@ -168,12 +215,13 @@ while cap.isOpened():
         break
  
     frame = cv2.flip(frame, 1)
+    height, width, _ = frame.shape
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
     mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
  
     frame_timestamps_ms += 33
     detection_result = detector.detect_for_video(mp_image, frame_timestamps_ms)
- 
+    result = landmarker.detect_for_video(mp_image, frame_timestamps_ms)
     triggered_expr = None
  
     if detection_result.face_landmarks:
@@ -218,7 +266,11 @@ while cap.isOpened():
                 cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
             )
  
-
+    if result.hand_landmarks:
+            for hand_index,(hand_landmarks, handedness) in  enumerate(zip(result.hand_landmarks, result.handedness)):
+                landmarks_px = [(int(lm.x * width), int(lm.y * height)) for lm in hand_landmarks]
+                draw_hand(frame, landmarks_px) 
+                label = handedness[0].category_name
         
     if triggered_expr is not None and triggered_expr.get('image') is not None:
         cv2.imshow('Reaction', triggered_expr['image'])
