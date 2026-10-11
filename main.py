@@ -98,7 +98,21 @@ BROW_UP_THRESHOLD = 0.4
 PUCKER_THRESHOLD = 0.4
 FROWN_THRESHOLD = 0.4
 
+ 
+def check_finger_at_mouth(ctx):
+    
+    if ctx["face"] is None or not ctx["hands"]:
+        return False
+    face, w, h = ctx["face"], ctx["w"], ctx["h"]
 
+    mouth = type("P", (), {"x": (face[13].x + face[14].x) / 2,
+                           "y": (face[13].y + face[14].y) / 2})()
+    face_width = distance(face[234], face[454])           
+    for hand in ctx["hands"]:
+        if distance(hand[8], mouth) / face_width < 0.25:  
+            return True
+    return False
+ 
 def check_wink_tongue(ctx):
     b = ctx['b']
     left = b.get('eyeBlinkLeft', 0.0)
@@ -115,7 +129,9 @@ def check_smile(ctx):
     return smile / 2 > SMILE_THRESHOLD
 
         
-EXPRESSIONS = []
+EXPRESSIONS = [
+    {'name': 'hmmm', 'image_basename': 'aaaamonkey', 'check': check_finger_at_mouth}
+]
 
 for expr in EXPRESSIONS:
     path = find_reaction_image(SCRIPT_DIR, expr['image_basename'])
