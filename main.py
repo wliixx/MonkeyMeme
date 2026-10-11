@@ -7,72 +7,75 @@ import mediapipe as mp
 from mediapipe.tasks import python
 from mediapipe.tasks.python import vision
  
+SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__)) 
+FACE_MODEL_PATH = os.path.join(SCRIPT_DIR, "face_landmarker.task")
+FACE_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/face_landmarker/"
+                  "face_landmarker/float16/1/face_landmarker.task")
+HAND_MODEL_PATH = os.path.join(SCRIPT_DIR, "hand_landmarker.task")
+HAND_MODEL_URL = ("https://storage.googleapis.com/mediapipe-models/hand_landmarker/"
+                  "hand_landmarker/float16/1/hand_landmarker.task")
+for path, url in ((FACE_MODEL_PATH, FACE_MODEL_URL), (HAND_MODEL_PATH, HAND_MODEL_URL)):
+    if not os.path.exists(path):
+        print(f"Скачиваю {os.path.basename(path)}...")
+        urllib.request.urlretrieve(url, path)
  
-MODEL_PATH = 'face_landmarker.task'
-MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task"
- 
-if not os.path.exists(MODEL_PATH):
-    print("Скачиваю модель face_landmarker.task...")
-    urllib.request.urlretrieve(MODEL_URL, MODEL_PATH)
- 
-base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-options = vision.FaceLandmarkerOptions(
-    base_options=base_options,
-    running_mode=vision.RunningMode.VIDEO,
-    num_faces=1,
-    min_face_detection_confidence=0.5,
-    min_face_presence_confidence=0.5,
-    min_tracking_confidence=0.5,
-    output_face_blendshapes=True,
-    output_facial_transformation_matrixes=False,
+face_detector = vision.FaceLandmarker.create_from_options(
+    vision.FaceLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=FACE_MODEL_PATH),
+        running_mode=vision.RunningMode.VIDEO,
+        num_faces=1,
+        min_face_detection_confidence=0.5,
+        min_face_presence_confidence=0.5,
+        min_tracking_confidence=0.5,
+        output_face_blendshapes=True,
+        output_facial_transformation_matrixes=False,
+    )
 )
-detector = vision.FaceLandmarker.create_from_options(options)
  
-SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-
-MODEL_PATH = "C:/Users/RedFox3k/hand_landmarker.task"
-HAND_CONNECTIONS = [
-    (0, 1), (1, 2), (2, 3), (3, 4),          # большой палец
-    (0, 5), (5, 6), (6, 7), (7, 8),          # указательный
-    (5, 9), (9, 10), (10, 11), (11, 12),     # средний
-    (9, 13), (13, 14), (14, 15), (15, 16),   # безымянный
-    (13, 17), (17, 18), (18, 19), (19, 20),  # мизинец
-    (0, 17),                                  # ладонь
-]
-
-base_options = python.BaseOptions(model_asset_path=MODEL_PATH)
-options = vision.HandLandmarkerOptions(
-    base_options=base_options,
-    num_hands=2,
-    min_hand_detection_confidence=0.7,
-    min_tracking_confidence=0.7,
-    running_mode=vision.RunningMode.VIDEO
+hand_detector = vision.HandLandmarker.create_from_options(
+    vision.HandLandmarkerOptions(
+        base_options=python.BaseOptions(model_asset_path=HAND_MODEL_PATH),
+        running_mode=vision.RunningMode.VIDEO,
+        num_hands=2,
+        min_hand_detection_confidence=0.7,
+        min_tracking_confidence=0.7,
+    )
 )
-
-landmarker = vision.HandLandmarker.create_from_options(options)
-
 TIP_IDS = [4, 8, 12, 16, 20]
+ 
+HAND_CONNECTIONS = [
+    (0, 1), (1, 2), (2, 3), (3, 4),
+    (0, 5), (5, 6), (6, 7), (7, 8),
+    (5, 9), (9, 10), (10, 11), (11, 12),
+    (9, 13), (13, 14), (14, 15), (15, 16),
+    (13, 17), (17, 18), (18, 19), (19, 20),
+    (0, 17),
+]
 
 def distance(p_a,p_b):
     return math.hypot(p_a.x - p_b.x, p_a.y - p_b.y)
 
-def count_fingers(landmarks, handedness_label):
-    fingers = []
-    thumb_tip = landmarks[4]
-    index_mcp = landmarks[17]
-    t_i_d = distance(thumb_tip, index_mcp)
+def get_blendshapes_dict(detection_result, face_index=0):
+    if not detection_result.face_blendshapes:
+        return{}
+    categoties = detection_result.face_blendshapes[face_index]
+    return {c.category_name: c.score for c in categoties}
+
+def count_fingers(landmarks):
     wrist = landmarks[0]
-    middle_mcp = landmarks[9]
-    hand_size = distance(wrist, middle_mcp)
-    THUMB_EXTENDED_RATIO = 0.8
-    fingers.append(1 if (t_i_d / hand_size)>THUMB_EXTENDED_RATIO else 0)
-    
-    for i in range(1,5):
+    fingers = []
+
+    # Большой: кончик дальше от основания мизинца, чем его сустав
+    fingers.append(1 if distance(landmarks[4], landmarks[17]) >
+                        distance(landmarks[3], landmarks[17]) * 1.1 else 0)
+
+    # Остальные: кончик дальше от запястья, чем средний сустав
+    for i in range(1, 5):
         tip = TIP_IDS[i]
-        pip_joint = tip - 2
-        fingers.append(1 if landmarks[tip].y < landmarks[pip_joint].y else 0)
-    return fingers 
- 
+        fingers.append(1 if distance(landmarks[tip], wrist) >
+                            distance(landmarks[tip - 2], wrist) else 0)
+    return fingers
+
  
 def find_reaction_image(folder, basename):
     if not os.path.isdir(folder):
@@ -85,14 +88,8 @@ def find_reaction_image(folder, basename):
             return os.path.join(folder, filename)
     return None
 
-def get_blandshapes_dict(detection_result, face_index=0):
-    if not detection_result.face_blendshapes:
-        return{}
-    categoties = detection_result.face_blendshapes[face_index]
-    return {c.category_name: c.score for c in categoties}
- 
- 
 
+ 
 WINK_THRESHOLD = 0.3
 WINK_OPEN_THRESHOLD = 0.3
 JAW_OPEN_THRESHOLD = 0.35
@@ -101,14 +98,6 @@ BROW_UP_THRESHOLD = 0.4
 PUCKER_THRESHOLD = 0.4
 FROWN_THRESHOLD = 0.4
 
- 
-def get_blendshapes_dict(detection_result, face_index=0):
-    if not detection_result.face_blendshapes:
-        return {}
-    categories = detection_result.face_blendshapes[face_index]
-    return {c.category_name: c.score for c in categories}
- 
- 
 
 def check_wink_tongue(ctx):
     b = ctx['b']
@@ -216,64 +205,38 @@ while cap.isOpened():
  
     frame = cv2.flip(frame, 1)
     height, width, _ = frame.shape
-    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=rgb_frame)
+    mp_image = mp.Image(image_format=mp.ImageFormat.SRGB, data=cv2.cvtColor(frame, cv2.COLOR_BGR2RGB))
  
     frame_timestamps_ms += 33
-    detection_result = detector.detect_for_video(mp_image, frame_timestamps_ms)
-    result = landmarker.detect_for_video(mp_image, frame_timestamps_ms)
-    triggered_expr = None
- 
-    if detection_result.face_landmarks:
-        for face_landmarks in detection_result.face_landmarks:
-            frame = draw_face_mesh(frame, face_landmarks)
- 
-        blendshapes = get_blendshapes_dict(detection_result)
-        face_landmarks = detection_result.face_landmarks[0]
-        ctx = {
-            "b": blendshapes,
-            "jaw_open": blendshapes.get("jawOpen", 0.0),
-        }
- 
-       
-        for expr in EXPRESSIONS:
-            if expr["check"](ctx):
-                triggered_expr = expr
-                break
- 
-        status_text = triggered_expr["name"] if triggered_expr else "..."
-        cv2.putText(
-            frame,
-            f"expression: {status_text}",
-            (10, 30),
-            cv2.FONT_HERSHEY_SIMPLEX,
-            0.7,
-            (0, 0, 0),
-            2,
-        )
- 
-        debug_lines = [
-            f"blink L/R={ctx['b'].get('eyeBlinkLeft',0):.2f}/{ctx['b'].get('eyeBlinkRight',0):.2f} "
-            f"jaw={ctx['jaw_open']:.2f}",
-            f"smile L/R={ctx['b'].get('mouthSmileLeft',0):.2f}/{ctx['b'].get('mouthSmileRight',0):.2f} "
-            f"browUp={ctx['b'].get('browInnerUp',0):.2f}",
-            f"frown L/R={ctx['b'].get('browDownLeft',0):.2f}/{ctx['b'].get('browDownRight',0):.2f} "
-            f"pucker={ctx['b'].get('mouthPucker',0):.2f}",
-        ]
-        for i, line in enumerate(debug_lines):
-            cv2.putText(
-                frame, line, (10, 60 + i * 22),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 1,
-            )
- 
-    if result.hand_landmarks:
-            for hand_index,(hand_landmarks, handedness) in  enumerate(zip(result.hand_landmarks, result.handedness)):
-                landmarks_px = [(int(lm.x * width), int(lm.y * height)) for lm in hand_landmarks]
-                draw_hand(frame, landmarks_px) 
-                label = handedness[0].category_name
+    face_result = face_detector.detect_for_video(mp_image, frame_timestamps_ms)
+    hand_result = hand_detector.detect_for_video(mp_image, frame_timestamps_ms)
+    
+    
+    
+    face = face_result.face_landmarks[0] if face_result.face_landmarks else None
+    hands = hand_result.hand_landmarks or []
+    
+    if face:
+        draw_face_mesh(frame, face)
         
-    if triggered_expr is not None and triggered_expr.get('image') is not None:
-        cv2.imshow('Reaction', triggered_expr['image'])
+    counts = {"Left": 0, "Right": 0}
+    for hand, handedness in zip(hands, hand_result.handedness):
+        draw_hand(frame, [(int(lm.x * width), int(lm.y * height)) for lm in hand])
+        label = handedness[0].category_name   # "Left" или "Right"
+        counts[label] = sum(count_fingers(hand))
+        
+    ctx = {"b": get_blendshapes_dict(face_result), "face": face, "hands": hands, "w": width, "h": height}
+
+    triggered = next((e for e in EXPRESSIONS if e["check"](ctx)), None)
+    
+    cv2.putText(frame, f"expression: {triggered['name'] if triggered else '...'}",
+                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+    
+    cv2.putText(frame, f"Left: {counts['Left']}   Right: {counts['Right']}",
+                (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+        
+    if triggered is not None and triggered.get('image') is not None:
+        cv2.imshow('Reaction', triggered['image'])
         reaction_window_open = True
     elif reaction_window_open:
         cv2.destroyWindow('Reaction')
@@ -287,5 +250,6 @@ while cap.isOpened():
  
 cap.release()
 cv2.destroyAllWindows()
-detector.close()
+face_detector.close()
+hand_detector.close()
  
