@@ -131,7 +131,8 @@ def check_smile(ctx):
         
 EXPRESSIONS = [
     {'name': 'hmmm', 'image_basename': 'aaaamonkey', 'check': check_finger_at_mouth},
-    {'name': 'smile','image_basename': 'smilingmonkey', 'check': check_smile}
+    {'name': 'smile','image_basename': 'smilingmonkey', 'check': check_smile},
+    {'name': 'freaky','image_basename': 'freakyahhmonkey', 'check':  check_finger_at_mouth and check_smile}
 ]
 
 for expr in EXPRESSIONS:
